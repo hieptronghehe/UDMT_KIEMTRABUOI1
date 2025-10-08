@@ -32,15 +32,22 @@ namespace Baithituan3
         {
             InitializeComponent();
             serialPort = new SerialPort();
-            System.Windows.Forms.Timer logTimer; // dùng cho chế độ tự động
+            serialPort.NewLine = "\r\n"; // Định dạng kết thúc dòng
+            serialPort.DataReceived += SerialPort_DataReceived;
+
+            // Khởi tạo timer 1 lần duy nhất
+            logTimer = new System.Windows.Forms.Timer();
+            logTimer.Interval = 2000; // 2s
+            logTimer.Tick += LogTimer_Tick;
+
+            // Thiết lập các combo 
             string[] Baudrate = { "9600", "14400", "19200", "38400", "57600", "115200" };
             comboBox2.Items.AddRange(Baudrate);
-            comboBox1.DataSource = SerialPort.GetPortNames();
-            Control.CheckForIllegalCrossThreadCalls = false;
             string[] Mode = {"Thủ công", "Tự động" }; // đã có
             comboBox3.Items.AddRange(Mode); // đã có 
+            comboBox3.SelectedIndex = 0;
             Control.CheckForIllegalCrossThreadCalls = false;
-            serialPort.DataReceived += SerialPort_DataReceived;
+            LoadAvailablePorts();
             InitChart();
         }
 
@@ -94,7 +101,7 @@ namespace Baithituan3
             try
             {
                 serialPort.PortName = comboBox1.SelectedItem.ToString();
-                serialPort.BaudRate = int.Parse(comboBox2.SelectedItem.ToString());
+               
                 serialPort.Open();
                 isConnected = true;
                 label6.Text = "Kết nối thành công!";
@@ -124,37 +131,50 @@ namespace Baithituan3
 
         private void StartLogging()
         {
+            if (isLogging) return;
             isLogging = true;
-            File.AppendAllText(logFilePath, "=== Bắt đầu ghi log ===" + Environment.NewLine);
+
+            try
+            {
+                File.AppendAllText(logFilePath, "=== Bắt đầu ghi log ===" + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Không thể mở file log: " + ex.Message);
+                isLogging = false;
+                return;
+            }
 
             if (isManualMode)
             {
-                // Ghi log liên tục trong thread riêng
+                // Ghi log liên tục trong thread riêng (manual)
                 Task.Run(() =>
                 {
                     while (isLogging)
                     {
-                        string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode thủ công";
-                        File.AppendAllText(logFilePath, log + Environment.NewLine);
+                        string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode thủ công: " + textBox1.Text;
+                        try { File.AppendAllText(logFilePath, log + Environment.NewLine); } catch { }
                         Thread.Sleep(500); // mỗi 0.5s ghi 1 lần
                     }
                 });
             }
             else
             {
-                // Chế độ tự động: chỉ ghi 1 lần rồi đợi Timer tắt
-                string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode tự động";
-                File.AppendAllText(logFilePath, log + Environment.NewLine);
-
-                logTimer.Start(); // đếm 2s rồi gọi LogTimer_Tick
+                // Automatic: ghi 1 lần rồi đợi timer 2s để tự dừng (theo yêu cầu của bạn)
+                string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode tự động: " + textBox1.Text;
+                try { File.AppendAllText(logFilePath, log + Environment.NewLine); } catch { }
+                logTimer.Start();
             }
         }
 
         private void StopLogging()
         {
+            if (!isLogging) return;
             isLogging = false;
-            logTimer.Stop();
-            File.AppendAllText(logFilePath, "=== Dừng ghi log ===" + Environment.NewLine);
+            try { if (logTimer.Enabled) logTimer.Stop(); } catch { }
+            try { File.AppendAllText(logFilePath, "=== Dừng ghi log ===" + Environment.NewLine); } catch { }
+
+            button2.Enabled = false;
         }
 
         private void LogTimer_Tick(object sender, EventArgs e)
@@ -162,23 +182,7 @@ namespace Baithituan3
             // Sau 2s thì tự dừng log
             StopLogging();
         }
-        private void btnStart_Click(object sender, EventArgs e)
-        {
-            // Kiểm tra chế độ từ ComboBox hoặc RadioButton
-            if (comboBox3.SelectedItem.ToString() == "Thủ công")
-                isManualMode = true;
-            else
-                isManualMode = false;
-
-            StartLogging();
-        }
-
-        private void btnStop_Click(object sender, EventArgs e)
-        {
-            StopLogging();
-        }
-
-
+       
         private void groupBox1_Enter(object sender, EventArgs e)
         {
 
@@ -218,30 +222,49 @@ namespace Baithituan3
                 comboBox1.Items.AddRange(ports);
                 comboBox1.SelectedIndex = 0;
                 comboBox1.Enabled = true;
+                button4.Enabled = true; // cho phép nút kết nối
             }
             else
             {
                 comboBox1.Items.Add("No port");
                 comboBox1.SelectedIndex = 0;
                 comboBox1.Enabled = false;
+                button4.Enabled = false;
             }
         }
+     
 
         private void button4_Click(object sender, EventArgs e)
         {
-          
-            serialPort.PortName = comboBox1.SelectedItem.ToString();  // Lấy tên COM
-            serialPort.BaudRate = int.Parse(comboBox2.SelectedItem.ToString());  // Lấy baudrate
+
+            if (comboBox1.SelectedItem == null || comboBox1.SelectedItem.ToString() == "No port")
+            {
+                label6.Text = "Không có cổng COM để kết nối.";
+                return;
+            }
+            if (comboBox2.SelectedItem != null)
+            {
+                if (int.TryParse(comboBox2.SelectedItem.ToString(), out int baud))
+                    serialPort.BaudRate = baud;
+            }
+            else
+            {
+                serialPort.BaudRate = 9600;
+            }
 
             try
             {
-                serialPort.Open(); // Mở cổng
+                if (!serialPort.IsOpen)
+                    serialPort.Open();
+
                 isConnected = true;
-                label6.Text = "Kết nối thành công!";
+                label6.Text = $"Kết nối {serialPort.PortName} @{serialPort.BaudRate}";
+                button4.Enabled = false;
+                button3.Enabled = true;
             }
             catch (Exception ex)
             {
-                label6.Text ="Lỗi khi mở cổng: " + ex.Message;
+                label6.Text = "Lỗi khi mở cổng: " + ex.Message;
             }
 
         }
