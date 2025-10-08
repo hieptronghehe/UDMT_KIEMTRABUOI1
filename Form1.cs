@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
+using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Text;
@@ -10,7 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ZedGraph;
-
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace Baithituan3
 {
@@ -18,23 +19,43 @@ namespace Baithituan3
     {
         private SerialPort serialPort;
         private bool isConnected = false;
+        private bool isLogging = false;
+        private bool isManualMode = false; // true = thủ công, false = tự động
+        private System.Windows.Forms.Timer logTimer;
+        private string logFilePath = "log.txt";
+        private double tempThreshold = 30.0; // ngưỡng nhiệt độ
+        private RollingPointPairList tempList;
+        private LineItem tempLine;
+        private int timeIndex = 0;
+
         public Form1()
         {
             InitializeComponent();
             serialPort = new SerialPort();
-            bool isManualMode = false;    // true = thủ công, false = tự động
-            bool isLogging = false;       // trạng thái đang ghi log
             System.Windows.Forms.Timer logTimer; // dùng cho chế độ tự động
-            string logFilePath = "log.txt"; // nơi lưu file log
-
             string[] Baudrate = { "9600", "14400", "19200", "38400", "57600", "115200" };
             comboBox2.Items.AddRange(Baudrate);
             comboBox1.DataSource = SerialPort.GetPortNames();
             Control.CheckForIllegalCrossThreadCalls = false;
-            string[] Mode = {"Thủ công", "Tự động" };
-            comboBox3.Items.AddRange(Mode);
+            string[] Mode = {"Thủ công", "Tự động" }; // đã có
+            comboBox3.Items.AddRange(Mode); // đã có 
+            Control.CheckForIllegalCrossThreadCalls = false;
+            serialPort.DataReceived += SerialPort_DataReceived;
+            InitChart();
         }
-        
+
+        private void InitChart()
+        {
+            GraphPane pane = zedGraphControl1.GraphPane;
+            pane.Title.Text = "Nhiệt độ theo thời gian";
+            pane.XAxis.Title.Text = "Thời gian (s)";
+            pane.YAxis.Title.Text = "Nhiệt độ (°C)";
+            tempList = new RollingPointPairList(600); // Lưu 600 điểm dữ liệu
+            tempLine = pane.AddCurve("Nhiệt độ", tempList, Color.Red, SymbolType.None);
+            zedGraphControl1.AxisChange();
+            zedGraphControl1.Invalidate();
+        }
+
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             try
@@ -46,6 +67,19 @@ namespace Baithituan3
                     this.Invoke(new MethodInvoker(delegate
                     {
                         textBox1.AppendText(data + Environment.NewLine);
+                        
+                        double temp;
+                        if (double.TryParse(data, out temp))
+                        {
+                            timeIndex++;
+                            tempList.Add(timeIndex, temp);
+                            zedGraphControl1.AxisChange();
+                            zedGraphControl1.Invalidate();
+                            if (temp > tempThreshold)
+                            {
+                                MessageBox.Show("Cảnh báo: Nhiệt độ vượt ngưỡng!", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            }
+                        }
                     }));
                 }
             }
@@ -57,7 +91,18 @@ namespace Baithituan3
         }
         private void Form1_Load(object sender, EventArgs e)
         {
-
+            try
+            {
+                serialPort.PortName = comboBox1.SelectedItem.ToString();
+                serialPort.BaudRate = int.Parse(comboBox2.SelectedItem.ToString());
+                serialPort.Open();
+                isConnected = true;
+                label6.Text = "Kết nối thành công!";
+            }
+            catch (Exception ex)
+            {
+                label6.Text = "Lỗi khi mở cổng: " + ex.Message;
+            }
         }
 
         private void label1_Click(object sender, EventArgs e)
@@ -120,7 +165,7 @@ namespace Baithituan3
         private void btnStart_Click(object sender, EventArgs e)
         {
             // Kiểm tra chế độ từ ComboBox hoặc RadioButton
-            if (comboBoxMode.SelectedItem.ToString() == "Thủ công")
+            if (comboBox3.SelectedItem.ToString() == "Thủ công")
                 isManualMode = true;
             else
                 isManualMode = false;
@@ -191,6 +236,7 @@ namespace Baithituan3
             try
             {
                 serialPort.Open(); // Mở cổng
+                isConnected = true;
                 label6.Text = "Kết nối thành công!";
             }
             catch (Exception ex)
@@ -208,6 +254,53 @@ namespace Baithituan3
         private void textBox1_TextChanged(object sender, EventArgs e)
         {
 
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            if (serialPort.IsOpen)
+            {
+                serialPort.Close();
+                isConnected = false;
+                label6.Text = "Đã ngắt kết nối.";
+            }
+            else
+            {
+                label6.Text = "Cổng đã đóng.";
+            }
+        }
+
+        private void button5_Click(object sender, EventArgs e)
+        {
+            isLogging = true;
+            File.AppendAllText(logFilePath, "=== Bắt đầu ghi log ===" + Environment.NewLine);
+            if (comboBox3.Text == "Thủ công")
+            {
+               // Manual mode logging
+                Task.Run(() =>
+                {
+                    while (isLogging)
+                    {
+                        string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode thủ công" + textBox1.Text;
+                        File.AppendAllText(logFilePath, log + Environment.NewLine);
+                        Thread.Sleep(500); // mỗi 0.5s ghi 1 lần
+                    }
+                });
+            }
+            else
+            {
+                // Automatic mode logging
+                string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode tự động" + textBox1.Text;
+                File.AppendAllText(logFilePath, log + Environment.NewLine);
+                logTimer.Interval = 2000; // 2000ms = 2 giây
+                logTimer.Tick += (s, ev) => { StopLogging(); };
+                logTimer.Start(); // đếm 2s rồi gọi LogTimer_Tick
+            }
+        }
+
+        private void button2_Click(object sender, EventArgs e)
+        {
+            StopLogging();
         }
     }
 }

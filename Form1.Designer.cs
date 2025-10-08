@@ -45,10 +45,10 @@
             this.groupBox1 = new System.Windows.Forms.GroupBox();
             this.groupBox2 = new System.Windows.Forms.GroupBox();
             this.groupBox3 = new System.Windows.Forms.GroupBox();
-            this.zedGraphControl1 = new ZedGraph.ZedGraphControl();
-            this.button2 = new System.Windows.Forms.Button();
-            this.label7 = new System.Windows.Forms.Label();
             this.button5 = new System.Windows.Forms.Button();
+            this.button2 = new System.Windows.Forms.Button();
+            this.zedGraphControl1 = new ZedGraph.ZedGraphControl();
+            this.label7 = new System.Windows.Forms.Label();
             this.groupBox1.SuspendLayout();
             this.groupBox2.SuspendLayout();
             this.groupBox3.SuspendLayout();
@@ -110,6 +110,7 @@
             this.button3.TabIndex = 7;
             this.button3.Text = "DISCONNECT";
             this.button3.UseVisualStyleBackColor = false;
+            this.button3.Click += new System.EventHandler(this.button3_Click);
             // 
             // button4
             // 
@@ -220,6 +221,26 @@
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "Data";
             // 
+            // button5
+            // 
+            this.button5.Location = new System.Drawing.Point(24, 74);
+            this.button5.Name = "button5";
+            this.button5.Size = new System.Drawing.Size(75, 23);
+            this.button5.TabIndex = 31;
+            this.button5.Text = "START";
+            this.button5.UseVisualStyleBackColor = true;
+            this.button5.Click += new System.EventHandler(this.button5_Click);
+            // 
+            // button2
+            // 
+            this.button2.Location = new System.Drawing.Point(201, 74);
+            this.button2.Name = "button2";
+            this.button2.Size = new System.Drawing.Size(75, 23);
+            this.button2.TabIndex = 17;
+            this.button2.Text = "STOP";
+            this.button2.UseVisualStyleBackColor = true;
+            this.button2.Click += new System.EventHandler(this.button2_Click);
+            // 
             // zedGraphControl1
             // 
             this.zedGraphControl1.Location = new System.Drawing.Point(794, 53);
@@ -237,15 +258,6 @@
             this.zedGraphControl1.UseExtendedPrintDialog = true;
             this.zedGraphControl1.Load += new System.EventHandler(this.zedGraphControl1_Load);
             // 
-            // button2
-            // 
-            this.button2.Location = new System.Drawing.Point(201, 74);
-            this.button2.Name = "button2";
-            this.button2.Size = new System.Drawing.Size(75, 23);
-            this.button2.TabIndex = 17;
-            this.button2.Text = "STOP";
-            this.button2.UseVisualStyleBackColor = true;
-            // 
             // label7
             // 
             this.label7.AutoSize = true;
@@ -254,15 +266,6 @@
             this.label7.Size = new System.Drawing.Size(136, 16);
             this.label7.TabIndex = 30;
             this.label7.Text = "GIÁM SÁT NHIỆT ĐỘ";
-            // 
-            // button5
-            // 
-            this.button5.Location = new System.Drawing.Point(24, 74);
-            this.button5.Name = "button5";
-            this.button5.Size = new System.Drawing.Size(75, 23);
-            this.button5.TabIndex = 31;
-            this.button5.Text = "START";
-            this.button5.UseVisualStyleBackColor = true;
             // 
             // Form1
             // 
