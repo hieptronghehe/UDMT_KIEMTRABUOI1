@@ -7,11 +7,13 @@ using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Linq;
+using System.Reflection.Emit;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using ZedGraph;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace Baithituan3
 {
@@ -20,35 +22,40 @@ namespace Baithituan3
         private SerialPort serialPort;
         private bool isConnected = false;
         private bool isLogging = false;
-        private bool isManualMode = false; // true = thủ công, false = tự động
+        private bool isManualMode = true; // true = thủ công, false = tự động
         private System.Windows.Forms.Timer logTimer;
         private string logFilePath = "log.txt";
-        private double tempThreshold = 30.0; // ngưỡng nhiệt độ
+        private double tempThreshold = 30.0; // Ngưỡng cảnh báo
         private RollingPointPairList tempList;
         private LineItem tempLine;
         private int timeIndex = 0;
-
+        private readonly object logLock = new object();
+        private DateTime lastWarningShown = DateTime.MinValue;
         public Form1()
         {
             InitializeComponent();
+
             serialPort = new SerialPort();
-            serialPort.NewLine = "\r\n"; // Định dạng kết thúc dòng
+            serialPort.NewLine = "\r\n";
             serialPort.DataReceived += SerialPort_DataReceived;
 
-            // Khởi tạo timer 1 lần duy nhất
             logTimer = new System.Windows.Forms.Timer();
-            logTimer.Interval = 2000; // 2s
+            logTimer.Interval = 2000; // 2 giây
             logTimer.Tick += LogTimer_Tick;
 
-            // Thiết lập các combo 
-            string[] Baudrate = { "9600", "14400", "19200", "38400", "57600", "115200" };
-            comboBox2.Items.AddRange(Baudrate);
-            string[] Mode = {"Thủ công", "Tự động" }; // đã có
-            comboBox3.Items.AddRange(Mode); // đã có 
+            string[] baudrates = { "9600", "14400", "19200", "38400", "57600", "115200" };
+            comboBox2.Items.AddRange(baudrates);
+            comboBox2.SelectedIndex = 0;
+
+            string[] modes = { "Thủ công", "Tự động" };
+            comboBox3.Items.AddRange(modes);
             comboBox3.SelectedIndex = 0;
-            Control.CheckForIllegalCrossThreadCalls = false;
+
             LoadAvailablePorts();
             InitChart();
+
+            label6.Text = "Disconnected";
+
         }
 
         private void InitChart()
@@ -57,59 +64,27 @@ namespace Baithituan3
             pane.Title.Text = "Nhiệt độ theo thời gian";
             pane.XAxis.Title.Text = "Thời gian (s)";
             pane.YAxis.Title.Text = "Nhiệt độ (°C)";
-            tempList = new RollingPointPairList(600); // Lưu 600 điểm dữ liệu
+            tempList = new RollingPointPairList(600);
             tempLine = pane.AddCurve("Nhiệt độ", tempList, Color.Red, SymbolType.None);
             zedGraphControl1.AxisChange();
-            zedGraphControl1.Invalidate();
         }
 
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             try
             {
-                string data = serialPort.ReadLine();
-
-                if (this.IsHandleCreated && !this.IsDisposed)
+                string data = serialPort.ReadLine().Trim();
+                if (double.TryParse(data, NumberStyles.Float, CultureInfo.InvariantCulture, out double temperature))
                 {
-                    this.Invoke(new MethodInvoker(delegate
-                    {
-                        textBox1.AppendText(data + Environment.NewLine);
-                        
-                        double temp;
-                        if (double.TryParse(data, out temp))
-                        {
-                            timeIndex++;
-                            tempList.Add(timeIndex, temp);
-                            zedGraphControl1.AxisChange();
-                            zedGraphControl1.Invalidate();
-                            if (temp > tempThreshold)
-                            {
-                                MessageBox.Show("Cảnh báo: Nhiệt độ vượt ngưỡng!", "Cảnh báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                            }
-                        }
-                    }));
+                    this.BeginInvoke((Action)(() => UpdateTemperature(temperature)));
                 }
             }
-            catch { /* Bỏ qua lỗi nhỏ khi đóng form */ }
+            catch { }
         }
-        private void serCOM_DataReceived(object sender, SerialDataReceivedEventArgs e)
-        {
 
-        }
         private void Form1_Load(object sender, EventArgs e)
         {
-            try
-            {
-                serialPort.PortName = comboBox1.SelectedItem.ToString();
-               
-                serialPort.Open();
-                isConnected = true;
-                label6.Text = "Kết nối thành công!";
-            }
-            catch (Exception ex)
-            {
-                label6.Text = "Lỗi khi mở cổng: " + ex.Message;
-            }
+
         }
 
         private void label1_Click(object sender, EventArgs e)
@@ -124,45 +99,26 @@ namespace Baithituan3
 
         private void comboBox3_SelectedIndexChanged(object sender, EventArgs e)
         {
-            logTimer = new System.Windows.Forms.Timer();
-            logTimer.Interval = 2000; // 2000ms = 2 giây
-            logTimer.Tick += LogTimer_Tick;
+            isManualMode = comboBox3.SelectedIndex == 0;
         }
-
         private void StartLogging()
         {
-            if (isLogging) return;
-            isLogging = true;
-
-            try
+            if (!isConnected)
             {
-                File.AppendAllText(logFilePath, "=== Bắt đầu ghi log ===" + Environment.NewLine);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Không thể mở file log: " + ex.Message);
-                isLogging = false;
+                label6.Text = "Chưa kết nối Arduino!";
                 return;
             }
 
+            isLogging = true;
+            File.AppendAllText(logFilePath, $"=== Bắt đầu ghi log ({DateTime.Now}) ==={Environment.NewLine}");
+
             if (isManualMode)
             {
-                // Ghi log liên tục trong thread riêng (manual)
-                Task.Run(() =>
-                {
-                    while (isLogging)
-                    {
-                        string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode thủ công: " + textBox1.Text;
-                        try { File.AppendAllText(logFilePath, log + Environment.NewLine); } catch { }
-                        Thread.Sleep(500); // mỗi 0.5s ghi 1 lần
-                    }
-                });
+                label6.Text = "Ghi log thủ công...";
             }
             else
             {
-                // Automatic: ghi 1 lần rồi đợi timer 2s để tự dừng (theo yêu cầu của bạn)
-                string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode tự động: " + textBox1.Text;
-                try { File.AppendAllText(logFilePath, log + Environment.NewLine); } catch { }
+                label6.Text = "Ghi log tự động (2s)...";
                 logTimer.Start();
             }
         }
@@ -170,19 +126,17 @@ namespace Baithituan3
         private void StopLogging()
         {
             if (!isLogging) return;
+            logTimer.Stop();
             isLogging = false;
-            try { if (logTimer.Enabled) logTimer.Stop(); } catch { }
-            try { File.AppendAllText(logFilePath, "=== Dừng ghi log ===" + Environment.NewLine); } catch { }
-
-            button2.Enabled = false;
+            File.AppendAllText(logFilePath, $"=== Dừng ghi log ({DateTime.Now}) ==={Environment.NewLine}");
+            label6.Text = "Đã dừng ghi log.";
         }
 
         private void LogTimer_Tick(object sender, EventArgs e)
         {
-            // Sau 2s thì tự dừng log
-            StopLogging();
+            StopLogging(); // Sau 2s thì dừng
         }
-       
+
         private void groupBox1_Enter(object sender, EventArgs e)
         {
 
@@ -215,58 +169,62 @@ namespace Baithituan3
         private void LoadAvailablePorts()
         {
             comboBox1.Items.Clear();
-            string[] ports = SerialPort.GetPortNames();
+            List<string> activePorts = new List<string>();
 
-            if (ports.Length > 0)
+            foreach (string port in SerialPort.GetPortNames())
             {
-                comboBox1.Items.AddRange(ports);
-                comboBox1.SelectedIndex = 0;
-                comboBox1.Enabled = true;
-                button4.Enabled = true; // cho phép nút kết nối
+                try
+                {
+                    using (SerialPort testPort = new SerialPort(port))
+                    {
+                        testPort.Open();
+                        testPort.Close();
+                        activePorts.Add(port);
+                    }
+                }
+                catch
+                {
+                    // Cổng đang bị chiếm hoặc không thực sự tồn tại
+                }
             }
+
+            comboBox1.Items.AddRange(activePorts.ToArray());
+            if (activePorts.Count > 0)
+                comboBox1.SelectedIndex = 0;
             else
-            {
-                comboBox1.Items.Add("No port");
-                comboBox1.SelectedIndex = 0;
-                comboBox1.Enabled = false;
-                button4.Enabled = false;
-            }
+                label6.Text = "Không tìm thấy cổng COM nào.";
         }
-     
+
 
         private void button4_Click(object sender, EventArgs e)
         {
-
-            if (comboBox1.SelectedItem == null || comboBox1.SelectedItem.ToString() == "No port")
+            if (isConnected)
             {
-                label6.Text = "Không có cổng COM để kết nối.";
+                label6.Text = "Đã kết nối!";
                 return;
             }
-            if (comboBox2.SelectedItem != null)
+
+            if (comboBox1.SelectedItem == null)
             {
-                if (int.TryParse(comboBox2.SelectedItem.ToString(), out int baud))
-                    serialPort.BaudRate = baud;
-            }
-            else
-            {
-                serialPort.BaudRate = 9600;
+                label6.Text = "Chưa chọn cổng COM!";
+                return;
             }
 
             try
             {
-                if (!serialPort.IsOpen)
-                    serialPort.Open();
-
+                serialPort.PortName = comboBox1.SelectedItem.ToString();
+                serialPort.BaudRate = int.Parse(comboBox2.SelectedItem.ToString());
+                serialPort.Open();
                 isConnected = true;
-                label6.Text = $"Kết nối {serialPort.PortName} @{serialPort.BaudRate}";
-                button4.Enabled = false;
-                button3.Enabled = true;
+                label6.Text = "Đang kết nối...";
+                button3.Enabled = false;
+                button4.Enabled = true;
             }
             catch (Exception ex)
             {
-                label6.Text = "Lỗi khi mở cổng: " + ex.Message;
+                label6.Text = "Lỗi kết nối: " + ex.Message;
             }
-
+            StartLogging();
         }
 
         private void label6_Click(object sender, EventArgs e)
@@ -281,50 +239,69 @@ namespace Baithituan3
 
         private void button3_Click(object sender, EventArgs e)
         {
-            if (serialPort.IsOpen)
+            try
             {
-                serialPort.Close();
-                isConnected = false;
-                label6.Text = "Đã ngắt kết nối.";
+                if (serialPort.IsOpen) serialPort.Close();
             }
-            else
-            {
-                label6.Text = "Cổng đã đóng.";
-            }
-        }
+            catch { }
 
-        private void button5_Click(object sender, EventArgs e)
-        {
-            isLogging = true;
-            File.AppendAllText(logFilePath, "=== Bắt đầu ghi log ===" + Environment.NewLine);
-            if (comboBox3.Text == "Thủ công")
-            {
-               // Manual mode logging
-                Task.Run(() =>
-                {
-                    while (isLogging)
-                    {
-                        string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode thủ công" + textBox1.Text;
-                        File.AppendAllText(logFilePath, log + Environment.NewLine);
-                        Thread.Sleep(500); // mỗi 0.5s ghi 1 lần
-                    }
-                });
-            }
-            else
-            {
-                // Automatic mode logging
-                string log = DateTime.Now.ToString("HH:mm:ss") + " - Dữ liệu mode tự động" + textBox1.Text;
-                File.AppendAllText(logFilePath, log + Environment.NewLine);
-                logTimer.Interval = 2000; // 2000ms = 2 giây
-                logTimer.Tick += (s, ev) => { StopLogging(); };
-                logTimer.Start(); // đếm 2s rồi gọi LogTimer_Tick
-            }
+            isConnected = false;
+            StopLogging();
+            label6.Text = "Disconnected";
+            button3.Enabled = true;
+            button4.Enabled = false;
         }
 
         private void button2_Click(object sender, EventArgs e)
         {
             StopLogging();
         }
-    }
-}
+    
 
+private void UpdateTemperature(double temperature)
+        {
+            textBox1.Text = temperature.ToString("0.0") + " °C";
+
+            tempList.Add(timeIndex++, temperature);
+            zedGraphControl1.AxisChange();
+            zedGraphControl1.Invalidate();
+
+            if (temperature > tempThreshold)
+            {
+                if ((DateTime.Now - lastWarningShown).TotalSeconds > 5)
+                {
+                    label6.Text = "⚠️ Cảnh báo: Nhiệt độ vượt ngưỡng!";
+                    label6.ForeColor = Color.Red;
+                    lastWarningShown = DateTime.Now;
+                }
+            }
+            else
+            {
+                label6.Text = "Đang giám sát...";
+                label6.ForeColor = Color.Black;
+            }
+
+            if (isLogging)
+            {
+                WriteLog(temperature);
+            }
+        }
+
+
+        private void WriteLog(double temperature)
+        {
+            lock (logLock)
+            {
+                try
+                {
+                    string logLine = $"{DateTime.Now:HH:mm:ss}, {temperature:0.00}";
+                    File.AppendAllText(logFilePath, logLine + Environment.NewLine);
+                }
+                catch (Exception ex)
+                {
+                    label6.Text = "Lỗi ghi log: " + ex.Message;
+                }
+            }
+        }
+    } 
+}
