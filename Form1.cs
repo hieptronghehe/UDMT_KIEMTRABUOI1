@@ -217,8 +217,8 @@ namespace Baithituan3
                 serialPort.Open();
                 isConnected = true;
                 label6.Text = "Đang kết nối...";
-                button3.Enabled = false;
-                button4.Enabled = true;
+                button3.Enabled = true ;
+                button4.Enabled = false;
             }
             catch (Exception ex)
             {
@@ -248,8 +248,8 @@ namespace Baithituan3
             isConnected = false;
             StopLogging();
             label6.Text = "Disconnected";
-            button3.Enabled = true;
-            button4.Enabled = false;
+            button3.Enabled = false;
+            button4.Enabled = true;
         }
 
         private void button2_Click(object sender, EventArgs e)
